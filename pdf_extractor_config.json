@@ -16,12 +16,12 @@
             "required": false
         },
         {
-            "name": "Claim Number",
-            "pattern": "Your\\s*VA\\s*claim\\s*number\\s*is:\\s*\\b\\d{2}-\\d{3}-\\d{4}\\b",
+            "name": "First Name",
+            "pattern": "Christopher",
             "required": false
         },
         {
-            "name": "Testing",
+            "name": "Web Address",
             "pattern": "https?://[^\\s/$.?#].[^\\s]*",
             "required": false
         }

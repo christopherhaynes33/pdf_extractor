@@ -3,6 +3,7 @@ import os
 import csv
 import json
 import re
+from typing import List, Dict, Optional, Any, cast, Iterable, Tuple
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
     QTextEdit,
     QProgressBar,
     QListWidget,
+    QListWidgetItem,
     QComboBox,
     QGroupBox,
     QCheckBox,
@@ -27,17 +29,28 @@ import pymupdf as fitz
 
 
 class FieldExtractor:
-    def __init__(self, config_path=None):
-        self.fields = []
+    """Handles configuration and extraction of specific fields from text using regex patterns."""
+
+    def __init__(self, config_path: Optional[str] = None) -> None:
+        """Initialize the FieldExtractor with optional custom config path.
+
+        Args:
+            config_path: Path to JSON configuration file. Defaults to 'pdf_extractor_config.json'.
+        """
+        self.fields: List[Dict[str, Any]] = []
         self.config_path = config_path or "pdf_extractor_config.json"
         self.load_config()
 
-    def load_config(self):
-        """Load field configuration from JSON file"""
+    def load_config(self) -> None:
+        """Load field configuration from JSON file or create default config if none exists.
+
+        Raises:
+            Exception: If there's an error loading or parsing the config file.
+        """
         try:
             if os.path.exists(self.config_path):
                 with open(self.config_path, "r") as f:
-                    config = json.load(f)
+                    config: Dict[str, Any] = json.load(f)
                     self.fields = config.get("fields", [])
             else:
                 # Create default config if doesn't exist
@@ -62,25 +75,38 @@ class FieldExtractor:
         except Exception as e:
             raise Exception(f"Error loading config: {str(e)}")
 
-    def save_config(self):
-        """Save current field configuration to JSON file"""
+    def save_config(self) -> None:
+        """Save current field configuration to JSON file.
+
+        Raises:
+            Exception: If there's an error writing the config file.
+        """
         try:
             with open(self.config_path, "w") as f:
                 json.dump({"fields": self.fields}, f, indent=4)
         except Exception as e:
             raise Exception(f"Error saving config: {str(e)}")
 
-    def extract_fields(self, text):
-        """Extract configured fields from text using regex patterns"""
-        results = {}
-        missing_required = []
+    def extract_fields(self, text: str) -> Dict[str, str]:
+        """Extract configured fields from text using regex patterns.
+
+        Args:
+            text: The text to extract fields from.
+
+        Returns:
+            Dictionary of extracted field names and values.
+
+        Raises:
+            Exception: If required fields are missing or pattern processing fails.
+        """
+        results: Dict[str, str] = {}
+        missing_required: List[str] = []
 
         for field in self.fields:
             try:
-                pattern = field.get("pattern", "")
+                pattern: str = field.get("pattern", "")
                 matches = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
                 if matches:
-                    print(matches)  # NOTE: Testing purposes
                     # Use the first capture group if exists, else the whole match
                     results[field["name"]] = (
                         matches.group(1) if matches.groups() else matches.group(0)
@@ -97,18 +123,29 @@ class FieldExtractor:
 
 
 class PDFExtractorThread(QThread):
+    """Worker thread for PDF extraction to prevent UI freezing."""
+
     progress_update = pyqtSignal(int)
     extraction_complete = pyqtSignal(str, list)
     extraction_error = pyqtSignal(str)
 
     def __init__(
         self,
-        pdf_paths,
-        output_path,
-        extract_text=True,
-        extract_images=False,
-        export_csv=False,
-    ):
+        pdf_paths: List[str],
+        output_path: str,
+        extract_text: bool = True,
+        extract_images: bool = False,
+        export_csv: bool = False,
+    ) -> None:
+        """Initialize the PDF extraction thread.
+
+        Args:
+            pdf_paths: List of PDF file paths to process.
+            output_path: Directory to save extracted content.
+            extract_text: Whether to extract raw text.
+            extract_images: Whether to extract images.
+            export_csv: Whether to export data as CSV.
+        """
         super().__init__()
         self.pdf_paths = pdf_paths
         self.output_path = output_path
@@ -117,97 +154,173 @@ class PDFExtractorThread(QThread):
         self.export_csv = export_csv
         self.field_extractor = FieldExtractor()
 
-    def run(self):
-        processed_files = []
+    def run(self) -> None:
+        """Main execution method for the thread, performs the PDF extraction."""
+        processed_files: List[str] = []
         try:
             total_pdfs = len(self.pdf_paths)
             for pdf_index, pdf_path in enumerate(self.pdf_paths):
-                doc = fitz.open(pdf_path)
-                total_pages = len(doc)
-                extracted_text = ""
-                csv_data = []
+                processed_files.append(
+                    self.process_single_pdf(pdf_index, pdf_path, total_pdfs)
+                )
 
-                base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-
-                if self.extract_images:
-                    images_dir = os.path.join(self.output_path, "images")
-                    os.makedirs(images_dir, exist_ok=True)
-
-                for page_num, page in enumerate(doc):
-                    page_text = page.get_text()
-
-                    if self.extract_text or self.export_csv:
-                        extracted_text += f"--- {base_name} - Page {page_num + 1} ---\n"
-                        extracted_text += page_text
-                        extracted_text += "\n\n"
-
-                    if self.export_csv:
-                        try:
-                            fields = self.field_extractor.extract_fields(page_text)
-                            row = {"File": base_name, "Page": page_num + 1}
-                            row.update(fields)
-                            csv_data.append(row)
-                        except Exception as e:
-                            # Skip page if field extraction fails but continue processing
-                            print(f"Warning processing page {page_num + 1}: {str(e)}")
-                            continue
-
-                    if self.extract_images:
-                        image_list = page.get_images(full=True)
-                        for img_index, img_info in enumerate(image_list):
-                            xref = img_info[0]
-                            base_image = doc.extract_image(xref)
-                            image_bytes = base_image["image"]
-                            image_ext = base_image["ext"]
-
-                            image_filename = f"{base_name}_page{page_num + 1}_img{img_index + 1}.{image_ext}"
-                            with open(
-                                os.path.join(images_dir, image_filename), "wb"
-                            ) as img_file:
-                                img_file.write(image_bytes)
-
-                    progress = int(
-                        ((pdf_index + (page_num + 1) / total_pages) / total_pdfs) * 100
-                    )
-                    self.progress_update.emit(progress)
-
-                if self.extract_text:
-                    text_file_path = os.path.join(
-                        self.output_path, f"{base_name}_text.txt"
-                    )
-                    with open(text_file_path, "w", encoding="utf-8") as text_file:
-                        text_file.write(extracted_text)
-
-                if self.export_csv and csv_data:
-                    csv_file_path = os.path.join(
-                        self.output_path, f"{base_name}_data.csv"
-                    )
-                    # Get all possible field names from all rows
-                    fieldnames = set()
-                    for row in csv_data:
-                        fieldnames.update(row.keys())
-                    fieldnames = sorted(fieldnames)
-
-                    with open(
-                        csv_file_path, "w", newline="", encoding="utf-8"
-                    ) as csv_file:
-                        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
-                        writer.writeheader()
-                        writer.writerows(csv_data)
-
-                processed_files.append(base_name + ".pdf")
-
-            if total_pdfs > 1:
-                self.extraction_complete.emit("All PDFs processed.", processed_files)
-            else:
-                self.extraction_complete.emit(extracted_text, processed_files)
-
+            self.emit_completion_result(processed_files, total_pdfs)
         except Exception as e:
             self.extraction_error.emit(f"Error extracting PDFs: {str(e)}")
 
+    def process_single_pdf(self, pdf_index: int, pdf_path: str, total_pdfs: int) -> str:
+        """Process a single PDF file and return its base name."""
+        with fitz.open(pdf_path) as doc:
+            base_name = self.get_base_name(pdf_path)
+            extracted_text, csv_data = self.process_pdf_pages(
+                doc, base_name, pdf_index, total_pdfs
+            )
+            self.save_output_files(base_name, extracted_text, csv_data)
+        return f"{base_name}.pdf"
+
+    def get_base_name(self, pdf_path: str) -> str:
+        """Extract the base filename without extension."""
+        return os.path.splitext(os.path.basename(pdf_path))[0]
+
+    def process_pdf_pages(
+        self, doc: fitz.Document, base_name: str, pdf_index: int, total_pdfs: int
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """Process all pages in a PDF document."""
+        extracted_text = ""
+        csv_data = []
+        total_pages = len(doc)
+
+        if self.extract_images:
+            self.setup_images_directory(base_name)
+
+        for page_num, page in enumerate(cast(Iterable[Any], doc)):
+            page_text = page.get_text()
+            extracted_text = self.process_page_text(
+                extracted_text, base_name, page_num, page_text
+            )
+            csv_data = self.process_page_csv(csv_data, base_name, page_num, page_text)
+            self.process_page_images(page, base_name, page_num)
+            self.update_progress(pdf_index, page_num, total_pages, total_pdfs)
+
+        return extracted_text, csv_data
+
+    def setup_images_directory(self, base_name: str) -> None:
+        """Create directory for images if needed."""
+        images_dir = os.path.join(self.output_path, "images")
+        os.makedirs(images_dir, exist_ok=True)
+
+    def process_page_text(
+        self, current_text: str, base_name: str, page_num: int, page_text: str
+    ) -> str:
+        """Process and append text for a single page."""
+        if self.extract_text or self.export_csv:
+            return (
+                current_text
+                + f"--- {base_name} - Page {page_num + 1} ---\n{page_text}\n\n"
+            )
+        return current_text
+
+    def process_page_csv(
+        self,
+        csv_data: List[Dict[str, Any]],
+        base_name: str,
+        page_num: int,
+        page_text: str,
+    ) -> List[Dict[str, Any]]:
+        """Process CSV data for a single page."""
+        if not self.export_csv:
+            return csv_data
+
+        try:
+            fields = self.field_extractor.extract_fields(page_text)
+            row = {"File": base_name, "Page": page_num + 1}
+            row.update(fields)
+            return csv_data + [row]
+        except Exception as e:
+            print(f"Warning processing page {page_num + 1}: {str(e)}")
+            return csv_data
+
+    def process_page_images(
+        self, page: fitz.Page, base_name: str, page_num: int
+    ) -> None:
+        """Extract images from a single page."""
+        if not self.extract_images:
+            return
+
+        images_dir = os.path.join(self.output_path, "images")
+        for img_index, img_info in enumerate(page.get_images(full=True)):
+            self.save_page_image(img_info, base_name, page_num, img_index, images_dir)
+
+    def save_page_image(
+        self,
+        img_info: Tuple,
+        base_name: str,
+        page_num: int,
+        img_index: int,
+        images_dir: str,
+    ) -> None:
+        """Save a single image from a page."""
+        xref = img_info[0]
+        base_image = img_info[1].extract_image(xref)
+        image_filename = (
+            f"{base_name}_page{page_num + 1}_img{img_index + 1}.{base_image['ext']}"
+        )
+        with open(os.path.join(images_dir, image_filename), "wb") as img_file:
+            img_file.write(base_image["image"])
+
+    def save_output_files(
+        self, base_name: str, extracted_text: str, csv_data: List[Dict[str, Any]]
+    ) -> None:
+        """Save all output files for a single PDF."""
+        if self.extract_text and extracted_text:
+            self.save_text_file(base_name, extracted_text)
+        if self.export_csv and csv_data:
+            self.save_csv_file(base_name, csv_data)
+
+    def save_text_file(self, base_name: str, text_content: str) -> None:
+        """Save extracted text to file."""
+        text_file_path = os.path.join(self.output_path, f"{base_name}_text.txt")
+        with open(text_file_path, "w", encoding="utf-8") as text_file:
+            text_file.write(text_content)
+
+    def save_csv_file(self, base_name: str, csv_data: List[Dict[str, Any]]) -> None:
+        """Save CSV data to file."""
+        csv_file_path = os.path.join(self.output_path, f"{base_name}_data.csv")
+        fieldnames = sorted({field for row in csv_data for field in row.keys()})
+
+        with open(csv_file_path, "w", newline="", encoding="utf-8") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(csv_data)
+
+    def update_progress(
+        self, pdf_index: int, page_num: int, total_pages: int, total_pdfs: int
+    ) -> None:
+        """Calculate and emit progress update."""
+        progress = int(((pdf_index + (page_num + 1) / total_pages) / total_pdfs) * 100)
+        self.progress_update.emit(progress)
+
+    def emit_completion_result(
+        self, processed_files: List[str], total_pdfs: int
+    ) -> None:
+        """Emit the appropriate completion signal."""
+        if total_pdfs > 1:
+            self.extraction_complete.emit("All PDFs processed.", processed_files)
+        else:
+            self.extraction_complete.emit(
+                "", processed_files
+            )  # Text is handled separately
+
 
 class ConfigEditorDialog(QWidget):
-    def __init__(self, field_extractor):
+    """Dialog window for editing field extraction configurations."""
+
+    def __init__(self, field_extractor: FieldExtractor) -> None:
+        """Initialize the configuration editor dialog.
+
+        Args:
+            field_extractor: The FieldExtractor instance to configure.
+        """
         super().__init__()
         self.field_extractor = field_extractor
         self.setWindowTitle("Field Configuration Editor")
@@ -258,25 +371,32 @@ class ConfigEditorDialog(QWidget):
         # Connect selection change
         self.field_list.currentItemChanged.connect(self.field_selected)
 
-    def refresh_field_list(self):
+    def refresh_field_list(self) -> None:
+        """Refresh the list of fields in the UI."""
         self.field_list.clear()
         for field in self.field_extractor.fields:
             self.field_list.addItem(
                 f"{field['name']} ({'required' if field.get('required', False) else 'optional'})"
             )
 
-    def field_selected(self, current):
+    def field_selected(self, current: Optional[QListWidgetItem]) -> None:
+        """Update field details when a field is selected.
+
+        Args:
+            current: The currently selected list item.
+        """
         if current:
-            index = self.field_list.row(current)
-            field = self.field_extractor.fields[index]
+            index: int = self.field_list.row(current)
+            field: Dict[str, Any] = self.field_extractor.fields[index]
             self.name_edit.setPlainText(field["name"])
             self.pattern_edit.setPlainText(field["pattern"])
             self.required_checkbox.setChecked(field.get("required", False))
 
-    def add_field(self):
-        name = self.name_edit.toPlainText().strip()
-        pattern = self.pattern_edit.toPlainText().strip()
-        required = self.required_checkbox.isChecked()
+    def add_field(self) -> None:
+        """Add a new field to the configuration."""
+        name: str = self.name_edit.toPlainText().strip()
+        pattern: str = self.pattern_edit.toPlainText().strip()
+        required: bool = self.required_checkbox.isChecked()
 
         if not name or not pattern:
             QMessageBox.warning(self, "Warning", "Field name and pattern are required.")
@@ -287,15 +407,16 @@ class ConfigEditorDialog(QWidget):
         )
         self.refresh_field_list()
 
-    def update_field(self):
-        current = self.field_list.currentItem()
+    def update_field(self) -> None:
+        """Update the currently selected field."""
+        current: Optional[QListWidgetItem] = self.field_list.currentItem()
         if not current:
             return
 
-        index = self.field_list.row(current)
-        name = self.name_edit.toPlainText().strip()
-        pattern = self.pattern_edit.toPlainText().strip()
-        required = self.required_checkbox.isChecked()
+        index: int = self.field_list.row(current)
+        name: str = self.name_edit.toPlainText().strip()
+        pattern: str = self.pattern_edit.toPlainText().strip()
+        required: bool = self.required_checkbox.isChecked()
 
         if not name or not pattern:
             QMessageBox.warning(self, "Warning", "Field name and pattern are required.")
@@ -308,16 +429,18 @@ class ConfigEditorDialog(QWidget):
         }
         self.refresh_field_list()
 
-    def remove_field(self):
-        current = self.field_list.currentItem()
+    def remove_field(self) -> None:
+        """Remove the currently selected field."""
+        current: Optional[QListWidgetItem] = self.field_list.currentItem()
         if not current:
             return
 
-        index = self.field_list.row(current)
+        index: int = self.field_list.row(current)
         self.field_extractor.fields.pop(index)
         self.refresh_field_list()
 
-    def save_config(self):
+    def save_config(self) -> None:
+        """Save the current configuration to file."""
         try:
             self.field_extractor.save_config()
             QMessageBox.information(
@@ -328,34 +451,39 @@ class ConfigEditorDialog(QWidget):
 
 
 class PDFExtractorApp(QMainWindow):
-    def __init__(self):
+    """Main application window for PDF Extractor."""
+
+    def __init__(self) -> None:
+        """Initialize the main application window."""
         super().__init__()
         self.setWindowTitle("PDF Extractor")
         self.setMinimumSize(900, 600)
         self.set_dark_mode()
 
-        self.pdf_paths = []
-        self.output_dir = None
+        self.pdf_paths: List[str] = []
+        self.output_dir: Optional[str] = None
         self.field_extractor = FieldExtractor()
 
         self.init_ui()
 
-    def set_dark_mode(self):
+    def set_dark_mode(self) -> None:
+        """Configure the application to use a dark theme."""
         dark_palette = QPalette()
         dark_palette.setColor(QPalette.Window, QColor(53, 53, 53))
-        dark_palette.setColor(QPalette.WindowText, Qt.white)
+        dark_palette.setColor(QPalette.WindowText, Qt.GlobalColor.white)
         dark_palette.setColor(QPalette.Base, QColor(35, 35, 35))
         dark_palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-        dark_palette.setColor(QPalette.ToolTipBase, Qt.white)
-        dark_palette.setColor(QPalette.ToolTipText, Qt.white)
-        dark_palette.setColor(QPalette.Text, Qt.white)
+        dark_palette.setColor(QPalette.ToolTipBase, Qt.GlobalColor.white)
+        dark_palette.setColor(QPalette.ToolTipText, Qt.GlobalColor.white)
+        dark_palette.setColor(QPalette.Text, Qt.GlobalColor.white)
         dark_palette.setColor(QPalette.Button, QColor(53, 53, 53))
-        dark_palette.setColor(QPalette.ButtonText, Qt.white)
-        dark_palette.setColor(QPalette.BrightText, Qt.red)
+        dark_palette.setColor(QPalette.ButtonText, Qt.GlobalColor.white)
+        dark_palette.setColor(QPalette.BrightText, Qt.GlobalColor.red)
         dark_palette.setColor(QPalette.Link, QColor(42, 130, 218))
         QApplication.setPalette(dark_palette)
 
-    def init_ui(self):
+    def init_ui(self) -> None:
+        """Initialize the user interface components."""
         main_widget = QWidget()
         main_layout = QVBoxLayout(main_widget)
 
@@ -364,7 +492,7 @@ class PDFExtractorApp(QMainWindow):
         title_font.setPointSize(16)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(title_label)
 
         self.mode_combo = QComboBox()
@@ -445,19 +573,23 @@ class PDFExtractorApp(QMainWindow):
 
         self.setCentralWidget(main_widget)
 
-    def open_config_editor(self):
+    def open_config_editor(self) -> None:
+        """Open the field configuration editor dialog."""
         self.config_editor = ConfigEditorDialog(self.field_extractor)
         self.config_editor.show()
 
-    def toggle_preview(self):
+    def toggle_preview(self) -> None:
+        """Toggle visibility of the extracted text preview panel."""
         self.preview_group.setVisible(self.preview_toggle_button.isChecked())
 
-    def mode_changed(self):
+    def mode_changed(self) -> None:
+        """Handle changes to the processing mode (single file vs folder)."""
         self.file_path_label.setText("No file or folder selected")
         self.pdf_paths = []
         self.check_extract_button()
 
-    def select_file_or_folder(self):
+    def select_file_or_folder(self) -> None:
+        """Select PDF file(s) to process based on current mode."""
         if self.mode_combo.currentIndex() == 0:  # Single PDF mode
             file_path, _ = QFileDialog.getOpenFileName(
                 self, "Select PDF File", "", "PDF Files (*.pdf)"
@@ -504,19 +636,22 @@ class PDFExtractorApp(QMainWindow):
 
         self.check_extract_button()
 
-    def select_output_directory(self):
+    def select_output_directory(self) -> None:
+        """Select output directory for extracted content."""
         output_dir = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if output_dir:
             self.output_dir = output_dir
             self.output_path_label.setText(output_dir)
             self.check_extract_button()
 
-    def check_extract_button(self):
+    def check_extract_button(self) -> None:
+        """Enable/disable extract button based on current selections."""
         self.extract_button.setEnabled(
             bool(self.pdf_paths) and self.output_dir is not None
         )
 
-    def start_extraction(self):
+    def start_extraction(self) -> None:
+        """Start the PDF extraction process with current settings."""
         # Automatically hide preview in batch mode
         if self.mode_combo.currentText() == "All PDFs in Folder":
             self.preview_toggle_button.setChecked(False)
@@ -540,6 +675,9 @@ class PDFExtractorApp(QMainWindow):
         self.progress_bar.setValue(0)
         self.processed_list.clear()
 
+        if self.output_dir is None:
+            raise ValueError("Output directory must be selected.")
+
         self.extraction_thread = PDFExtractorThread(
             self.pdf_paths,
             self.output_dir,
@@ -554,10 +692,23 @@ class PDFExtractorApp(QMainWindow):
 
         self.extraction_thread.start()
 
-    def update_progress(self, value):
+    def update_progress(self, value: int) -> None:
+        """Update the progress bar.
+
+        Args:
+            value: Current progress value (0-100).
+        """
         self.progress_bar.setValue(value)
 
-    def on_extraction_complete(self, extracted_text, processed_files):
+    def on_extraction_complete(
+        self, extracted_text: str, processed_files: List[str]
+    ) -> None:
+        """Handle completion of PDF extraction.
+
+        Args:
+            extracted_text: The extracted text content (for single file mode).
+            processed_files: List of processed file names.
+        """
         if (
             self.extract_text_checkbox.isChecked()
             and self.mode_combo.currentText() == "Single PDF"
@@ -573,7 +724,12 @@ class PDFExtractorApp(QMainWindow):
             f"PDF extraction completed successfully.\n\nFiles saved to: {self.output_dir}",
         )
 
-    def on_extraction_error(self, error_message):
+    def on_extraction_error(self, error_message: str) -> None:
+        """Handle extraction errors.
+
+        Args:
+            error_message: Description of the error that occurred.
+        """
         self.extract_button.setEnabled(True)
         QMessageBox.critical(self, "Error", error_message)
 
