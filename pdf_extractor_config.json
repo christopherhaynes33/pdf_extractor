@@ -1,0 +1,29 @@
+{
+    "fields": [
+        {
+            "name": "invoice_number",
+            "pattern": "Invoice\\s*Number:\\s*(\\w+)",
+            "required": false
+        },
+        {
+            "name": "date",
+            "pattern": "Date:\\s*(\\d{2}/\\d{2}/\\d{4})",
+            "required": false
+        },
+        {
+            "name": "total_amount",
+            "pattern": "Total\\s*Amount:\\s*\\$?([\\d,]+\\.\\d{2})",
+            "required": false
+        },
+        {
+            "name": "Claim Number",
+            "pattern": "Your\\s*VA\\s*claim\\s*number\\s*is:\\s*\\b\\d{2}-\\d{3}-\\d{4}\\b",
+            "required": false
+        },
+        {
+            "name": "Testing",
+            "pattern": "https?://[^\\s/$.?#].[^\\s]*",
+            "required": false
+        }
+    ]
+}
