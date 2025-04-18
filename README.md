@@ -40,7 +40,38 @@ and run the `temp.py` file.
 
 ## Usage
 
-The application can has two options: Single PDF parser and Multiple PDF parser.
-The multiple PDF parser will search all files/subfolders within the selected directory.
-Note that the multi-PDF functionality does not currently show the extracted text;
-however, the single PDF parser option will show said text in the bottom window.
+The application can parse the following:
+
+- Single PDF parser.
+  - Will show parsed text in the bottom window.
+- Multiple PDF parser.
+  - Will search all files/subfolders within the selected directory.
+  - Does not show extracted text like the single PDF parser.
+
+### Configuration
+
+The application has configuration options to target desired values.
+This essentially operates as a simple "rules engine" that can be quickly adapted.
+To edit the configuration options:
+
+- Utilize the GUI to add new rules to the configuration.
+- Edit the configuration file directly.
+
+```json
+{
+    "fields": [
+        {
+            "name": "Web Address",
+            "pattern": "https?://[^\\s/$.?#].[^\\s]*",
+            "required": false
+        }
+    ]
+}
+```
+
+Considering the example above (used to extract & save web addresses):
+
+- name: The name of the column header in the excel file.
+- pattern: The regular expression (regex) used to identify the desired text.
+- required: If the field is required or not.
+  - If a required field is not found, the CSV will not be saved.
