@@ -55,7 +55,7 @@ This essentially operates as a simple "rules engine" that can be quickly adapted
 To edit the configuration options:
 
 - Utilize the GUI to add new rules to the configuration.
-- Edit the configuration file directly.
+  - Note that the configuration file can also be edited directly.
 
 ```json
 {
