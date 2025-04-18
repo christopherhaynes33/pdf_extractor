@@ -1,7 +1,7 @@
 [project]
 name = "pdf-scanner"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.1.1"
+description = "Single/Multi PDF Parser for data extraction to text and/or CSV."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
