@@ -1,5 +1,6 @@
 import sys
 import os
+import csv
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -30,12 +31,20 @@ class PDFExtractorThread(QThread):
     extraction_complete = pyqtSignal(str, list)
     extraction_error = pyqtSignal(str)
 
-    def __init__(self, pdf_paths, output_path, extract_text=True, extract_images=False):
+    def __init__(
+        self,
+        pdf_paths,
+        output_path,
+        extract_text=True,
+        extract_images=False,
+        export_csv=False,
+    ):
         super().__init__()
         self.pdf_paths = pdf_paths
         self.output_path = output_path
         self.extract_text = extract_text
         self.extract_images = extract_images
+        self.export_csv = export_csv
 
     def run(self):
         processed_files = []
@@ -45,6 +54,7 @@ class PDFExtractorThread(QThread):
                 doc = fitz.open(pdf_path)
                 total_pages = len(doc)
                 extracted_text = ""
+                csv_data = []
 
                 base_name = os.path.splitext(os.path.basename(pdf_path))[0]
 
@@ -53,10 +63,21 @@ class PDFExtractorThread(QThread):
                     os.makedirs(images_dir, exist_ok=True)
 
                 for page_num, page in enumerate(doc):
+                    page_text = page.get_text()
+
                     if self.extract_text:
                         extracted_text += f"--- {base_name} - Page {page_num + 1} ---\n"
-                        extracted_text += page.get_text()
+                        extracted_text += page_text
                         extracted_text += "\n\n"
+
+                    if self.export_csv:
+                        csv_data.append(
+                            {
+                                "File": base_name,
+                                "Page": page_num + 1,
+                                "Text": page_text.strip().replace("\n", " "),
+                            }
+                        )
 
                     if self.extract_images:
                         image_list = page.get_images(full=True)
@@ -83,6 +104,19 @@ class PDFExtractorThread(QThread):
                     )
                     with open(text_file_path, "w", encoding="utf-8") as text_file:
                         text_file.write(extracted_text)
+
+                if self.export_csv and csv_data:
+                    csv_file_path = os.path.join(
+                        self.output_path, f"{base_name}_text.csv"
+                    )
+                    with open(
+                        csv_file_path, "w", newline="", encoding="utf-8"
+                    ) as csv_file:
+                        writer = csv.DictWriter(
+                            csv_file, fieldnames=["File", "Page", "Text"]
+                        )
+                        writer.writeheader()
+                        writer.writerows(csv_data)
 
                 processed_files.append(base_name + ".pdf")
 
@@ -131,7 +165,7 @@ class PDFExtractorApp(QMainWindow):
         title_font.setPointSize(16)
         title_font.setBold(True)
         title_label.setFont(title_font)
-        title_label.setAlignment(Qt.AlignCenter) # Attribute "AlignCenter" is unknown error in editor
+        title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
 
         self.mode_combo = QComboBox()
@@ -166,6 +200,9 @@ class PDFExtractorApp(QMainWindow):
         self.extract_text_checkbox.setChecked(True)
         options_layout.addWidget(self.extract_text_checkbox)
 
+        self.export_csv_checkbox = QCheckBox("Export as CSV")
+        options_layout.addWidget(self.export_csv_checkbox)
+
         self.extract_images_checkbox = QCheckBox("Extract Images")
         options_layout.addWidget(self.extract_images_checkbox)
 
@@ -197,7 +234,6 @@ class PDFExtractorApp(QMainWindow):
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
         self.preview_text.setMinimumHeight(900)
-        # self.preview_text.setMaximumHeight(300)
         preview_layout.addWidget(self.preview_text)
 
         self.preview_group.setLayout(preview_layout)
@@ -280,9 +316,11 @@ class PDFExtractorApp(QMainWindow):
         else:
             self.preview_toggle_button.setChecked(True)
             self.preview_group.setVisible(True)
+
         if (
             not self.extract_text_checkbox.isChecked()
             and not self.extract_images_checkbox.isChecked()
+            and not self.export_csv_checkbox.isChecked()
         ):
             QMessageBox.warning(
                 self, "Warning", "Please select at least one extraction option."
@@ -299,6 +337,7 @@ class PDFExtractorApp(QMainWindow):
             self.output_dir,
             self.extract_text_checkbox.isChecked(),
             self.extract_images_checkbox.isChecked(),
+            self.export_csv_checkbox.isChecked(),
         )
 
         self.extraction_thread.progress_update.connect(self.update_progress)
